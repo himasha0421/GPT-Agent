@@ -1,13 +1,22 @@
 """this module responsible for check backend systems or for web scraping"""
+import inspect
 from typing import List
 
+import numpy as np
 from dotenv import load_dotenv
 from langchain import LLMChain, OpenAI
 from langchain.agents import AgentExecutor, Tool, ZeroShotAgent
 from langchain.chains.conversation.memory import ConversationBufferMemory
-from langchain.utilities import GoogleSerperAPIWrapper
+from plugins.balance_checker import BalanceChecker
+from plugins.google_search import Search
 from utils import check_balance
 
+# load the usable class names
+modules = {
+    'BalanceChecker' : 'active',
+    'Search': 'active'
+
+}
 # load the enviroment variables
 load_dotenv()
 
@@ -16,8 +25,7 @@ class ChatAgent :
     """this class responsible to act as backend query system"""
 
     llm_model = OpenAI(temperature=0)                               # define the openai llm
-    memory = ConversationBufferMemory(memory_key="chat_history")    # define chathistory buffer memeory
-    search_api = GoogleSerperAPIWrapper()                           # initialize the google search wrapper                    
+    memory = ConversationBufferMemory(memory_key="chat_history")    # define chathistory buffer memeory               
 
     def __init__(self) -> None:
         pass
@@ -25,21 +33,46 @@ class ChatAgent :
     def init_tools(self) -> List[Tool]:
         """this method responsible to initialize serveral tools google api/balance check"""
 
-        tools = [
-            Tool(
-                name="Search",
-                func= self.search_api.run,
-                description="useful for when you need to answer questions about current events",
-                return_direct=False,
-            ),
-            Tool(
-                name="Check Account Balance",
-                func=lambda number: check_balance(number),
-                description="useful for when you need to get the account balance for the mobile number",
-                return_direct=True,
-            ),
-        ]
-        return tools
+        self.plugins = {}
+
+        # Load Basic Foundation Models
+        for class_name, status in modules.items():
+            if(status=='active'):
+                self.plugins[class_name] = globals()[class_name]()
+
+        # Load Template Foundation Models
+        for class_name, module in globals().items():
+            if getattr(module, 'template_model', False):
+                template_required_names = {k for k in inspect.signature(module.__init__).parameters.keys() if k!='self'}
+                loaded_names = set([type(e).__name__ for e in self.plugins.values()])
+                if template_required_names.issubset(loaded_names):
+                    self.plugins[class_name] = globals()[class_name](
+                        **{name: self.plugins[name] for name in template_required_names})
+        
+        # load the agent plugins
+        self.tools = []
+        for instance in self.plugins.values():
+            for e in dir(instance):
+                if e.startswith('inference'):
+                    func = getattr(instance, e)
+                    self.tools.append(Tool(name=func.name, description=func.description, func=func))
+
+        # direct initialization
+        # tools = [
+        #     Tool(
+        #         name="Search",
+        #         func= self.search_api.run,
+        #         description="useful for when you need to answer questions about current events",
+        #         return_direct=False,
+        #     ),
+        #     Tool(
+        #         name="Check Account Balance",
+        #         func=lambda number: check_balance(number),
+        #         description="useful for when you need to get the account balance for the mobile number",
+        #         return_direct=True,
+        #     ),
+        # ]
+        return self.tools
     
     def init_prompt(self):
         """this method responsible to initialize the agent prompt"""

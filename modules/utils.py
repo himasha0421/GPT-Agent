@@ -4,6 +4,14 @@ import re
 from typing import Iterator, TextIO
 
 
+def prompts(name, description):
+    def decorator(func):
+        func.name = name
+        func.description = description
+        return func
+
+    return decorator
+
 def check_balance(word:str) ->str:
     """this function is to query the backend system to check balance"""
     answer = word
